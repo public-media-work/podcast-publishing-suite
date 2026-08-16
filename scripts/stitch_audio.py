@@ -696,6 +696,36 @@ def build_filter_graph(
     return ";".join(chains)
 
 
+def format_timestamp(seconds: float) -> str:
+    """H:MM:SS or M:SS -- something you can scrub to in a player."""
+    seconds = max(int(round(seconds)), 0)
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def review_notes(resolved: list, plan: EncodePlan) -> list:
+    """Where a human has to listen, because no test can hear it.
+
+    An overlap is placed against the *average* episode; whether it lands on
+    the closing words of a *particular* one is an editorial judgement. Return
+    a scrub point per overlapping segment.
+    """
+    notes = []
+    for index, segment in enumerate(resolved):
+        if not segment.overlap_ms:
+            continue
+        start = plan.positions[index] if plan.positions else 0.0
+        previous = resolved[index - 1].id if index else "the previous segment"
+        notes.append(
+            f"'{segment.id}' enters at {format_timestamp(start)}, "
+            f"{segment.overlap_ms / 1000:.2f}s under '{previous}'"
+        )
+    return notes
+
+
 def concat_list_text(paths) -> str:
     """A concat-demuxer list. Single quotes inside a path are escaped.
 
@@ -927,6 +957,19 @@ def main() -> None:
 
     run_stitch(resolved, probes, plan, out_path, args.verbose)
     verify_output(out_path, plan.total_duration)
+
+    notes = review_notes(resolved, plan)
+    if notes:
+        print("\n" + "=" * 68)
+        print("LISTEN BEFORE PUBLISHING -- this export overlaps segments.")
+        print("The duration checks out, but only an ear can tell whether the")
+        print("music lands under the closing words or on top of them.")
+        for note in notes:
+            print(f"  -> {note}")
+        # Bigger overlap starts the segment EARLIER, so it covers more speech.
+        print("Music walking on the sign-off -> LOWER `overlapMs` for this show.")
+        print("Dead air before the music     -> RAISE it.")
+        print("=" * 68)
 
 
 if __name__ == "__main__":

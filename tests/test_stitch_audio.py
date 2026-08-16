@@ -22,7 +22,9 @@ from stitch_audio import (  # noqa: E402
     build_filter_graph,
     concat_list_text,
     episode_paths,
+    format_timestamp,
     load_stitch_spec,
+    review_notes,
     scan_candidates,
     plan_encoding,
     resolve_slots,
@@ -733,6 +735,33 @@ def test_overlap_config_round_trips():
         }
     }
     assert load_stitch_spec(config).segments[1].overlap_ms == 4200
+
+
+@pytest.mark.parametrize(
+    "seconds,formatted",
+    [(0, "0:00"), (9.4, "0:09"), (69, "1:09"), (2171.5, "36:12"),
+     (3600, "1:00:00"), (3661, "1:01:01"), (-5, "0:00")],
+)
+def test_format_timestamp(seconds, formatted):
+    assert format_timestamp(seconds) == formatted
+
+
+def test_review_notes_point_at_the_overlap():
+    resolved = [oseg("intro"), oseg("program"), oseg("outro", overlap=3200)]
+    probes = [probe(11.52), probe(2167.4), probe(17.0)]
+    plan = plan_encoding(resolved, probes, None)
+    notes = review_notes(resolved, plan)
+    assert len(notes) == 1
+    # 11.52 + 2167.4 - 3.2 = 2175.7s
+    assert "'outro' enters at 36:16" in notes[0]
+    assert "3.20s under 'program'" in notes[0]
+
+
+def test_no_review_notes_without_overlap():
+    resolved = [oseg("a"), oseg("b", fade_in=250)]
+    probes = [probe(10.0), probe(5.0)]
+    plan = plan_encoding(resolved, probes, None)
+    assert review_notes(resolved, plan) == []
 
 
 def test_concat_list_escapes_single_quotes():

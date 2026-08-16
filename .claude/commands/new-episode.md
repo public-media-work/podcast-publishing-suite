@@ -87,6 +87,14 @@ python3 scripts/stitch_audio.py --show <slug> --episode <key>
 
 or that `/stitch-audio <slug> <key>` does the same.
 
+**5. If the show overlaps segments, flag the listen.** In Focus tucks its
+outro under the close (`overlapMs`), so its exports print a
+`LISTEN BEFORE PUBLISHING` block naming the timestamp the outro enters. Relay
+it verbatim and do not report the episode as finished — the duration check
+cannot hear whether the music landed on the sign-off. See `/stitch-audio` for
+which way to move the value. McCoshen & Ross is butt-spliced and prints
+nothing, which is correct for it.
+
 ## Failure surfaces
 
 Both scripts fail loudly and report every problem at once — read the whole

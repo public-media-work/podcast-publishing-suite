@@ -99,6 +99,27 @@ load only the `MCROSS` files, or the resolver will report the rest as strays.
 Take the `.wav`, not the `.mp3`: the bookends are 24-bit masters, so the stitch
 re-encodes once at the end rather than twice.
 
+## If the export overlaps segments, a human must listen
+
+When a show's config sets `overlapMs` on a slot, the script prints a
+`LISTEN BEFORE PUBLISHING` block with the exact timestamp the overlapping
+segment enters. **Relay that verbatim and do not call the episode done.**
+
+The duration check proves nothing here — an overlap is placed against the
+*average* episode, and whether it lands under the closing words or on top of
+them depends on how long the host talked in *this* one. No test can hear it.
+
+Tell the user the scrub point, and what to do with what they hear:
+
+- **Music walking on the sign-off** → `overlapMs` is too high for this show.
+- **Dead air before the music** → too low.
+- **Sounds right** → say so; the value is earning its keep.
+
+This is under active confirmation — In Focus was set to `3200` against a
+hand-mixed reference of 4.14–4.30s, deliberately looser because a template
+cannot hear where speech ends. Until several episodes have been confirmed by
+ear, treat every overlapping export as needing review.
+
 ## Notes
 
 - **Never reorder segments yourself.** `sorted()` is not playback order; this
