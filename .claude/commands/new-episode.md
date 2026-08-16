@@ -40,13 +40,20 @@ Read the annotations:
 | Annotation | Meaning |
 |---|---|
 | `MISSING .wav` | Production hasn't delivered the body, or it has aged off the server. **Not pullable.** Don't offer it |
+| Only `.wav`, no captions | **Probably not aired yet.** Captions arrive after broadcast, so an audio-only episode is often a future one that hit ingest early. Say so and confirm before pulling — the newest arrival is not always the newest *episode* |
 | `revision of X` | A `_REV<date>` recut. It supersedes `X` — prefer it, and say so |
 | `local` | Already has an episode folder (only shown with `--all`) |
 
-**2. Confirm which episode.** Do not assume the newest is the one they mean —
-production often drops several between sessions, and a revision may sit below
-its original in the list. Show the top few candidates with their dates and
-artifacts, and ask. If they named a key explicitly, skip ahead.
+**2. Confirm which episode.** Do not assume the newest is the one they mean.
+Ingest arrival order is not air order — **episodes reach the server before they
+air**, so the top entry may be a future one. Production also drops several
+between sessions, and a revision can sit below its original in the list. Show
+the top few candidates with their dates and artifacts, flag any that look
+unaired, and ask. If they named a key explicitly, skip ahead.
+
+This has already caused one wrong render: `6INF0123` was the newest arrival and
+turned out to be unaired; the wanted episode was `6INF0122`, one row down. The
+tell was there — 0123 had only a `.wav` while 0122 had its captions.
 
 Say the episode's title if you can get it — the `.txt` transcript's opening
 lines or the `.srt` usually name the guest. That's what makes "6INF0123"

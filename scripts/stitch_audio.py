@@ -124,6 +124,7 @@ class Segment:
     required: bool
     fade_in_ms: int
     fade_out_ms: int
+    overlap_ms: int  # how far this segment starts BEFORE the previous one ends
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,7 @@ class ResolvedSegment:
     path: Path
     fade_in_ms: int
     fade_out_ms: int
+    overlap_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -167,6 +169,32 @@ class EncodePlan:
     channels: int
     total_duration: float
     encoder: str | None
+    positions: tuple = ()  # each segment's start on the timeline, seconds
+
+
+def timeline_positions(resolved: list, probes: list) -> tuple:
+    """Where each segment starts, honouring overlaps. Returns (positions, end).
+
+    A segment's `overlap_ms` pulls it back under the tail of the one before,
+    which is how the Pro Tools sessions place the outro -- the music comes up
+    under the last words rather than starting after them. With every overlap
+    at zero this is plain cumulative addition and the end equals the sum of
+    the durations.
+    """
+    positions = []
+    cursor = 0.0
+    previous_duration = 0.0
+    for index, (segment, probe) in enumerate(zip(resolved, probes)):
+        if index:
+            # Never pull a segment back past the start of the one before it.
+            overlap = min(segment.overlap_ms / 1000, previous_duration)
+            cursor = cursor + previous_duration - overlap
+        positions.append(cursor)
+        previous_duration = probe.duration
+    end = max(
+        (pos + probe.duration for pos, probe in zip(positions, probes)), default=0.0
+    )
+    return tuple(positions), end
 
 
 # --- config ------------------------------------------------------------
@@ -225,12 +253,20 @@ def load_stitch_spec(config: dict) -> StitchSpec:
                 problems.append(f"  {where}: `match` is not a valid regex ({exc})")
 
         fades = {}
-        for key, field in (("fadeInMs", "fade_in_ms"), ("fadeOutMs", "fade_out_ms")):
+        for key, field in (("fadeInMs", "fade_in_ms"), ("fadeOutMs", "fade_out_ms"),
+                           ("overlapMs", "overlap_ms")):
             value = raw.get(key, 0)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 problems.append(f"  {where}: `{key}` must be a non-negative integer")
                 value = 0
             fades[field] = value
+
+        if index == 0 and fades["overlap_ms"]:
+            problems.append(
+                f"  {where}: `overlapMs` says how far this segment starts before "
+                "the previous one ends, so it is meaningless on the first segment"
+            )
+            fades["overlap_ms"] = 0
 
         required = raw.get("required", True)
         if not isinstance(required, bool):
@@ -457,6 +493,7 @@ def resolve_slots(
                 path=path,
                 fade_in_ms=segment.fade_in_ms,
                 fade_out_ms=segment.fade_out_ms,
+                overlap_ms=segment.overlap_ms if resolved else 0,
             )
         )
 
@@ -528,6 +565,11 @@ def plan_encoding(
     for segment in resolved:
         if segment.fade_in_ms or segment.fade_out_ms:
             reasons.append(f"fade requested on '{segment.id}'")
+        if segment.overlap_ms:
+            reasons.append(
+                f"'{segment.id}' overlaps the previous segment by "
+                f"{segment.overlap_ms / 1000:.2f}s"
+            )
 
     codecs = {p.codec for p in probes}
     rates = {p.sample_rate for p in probes}
@@ -554,7 +596,7 @@ def plan_encoding(
         # the rate keeps a stitched episode consistent with the back catalogue.
         reasons.append(f"resampling {sorted(rates)} -> {sample_rate} Hz per show config")
     target_channels = max(channels) if channels else 2
-    total = sum(p.duration for p in probes)
+    positions, total = timeline_positions(resolved, probes)
 
     if not reasons:
         return EncodePlan(
@@ -565,6 +607,7 @@ def plan_encoding(
             channels=target_channels,
             total_duration=total,
             encoder=None,
+            positions=positions,
         )
 
     encoder = ENCODERS.get(suffix)
@@ -595,6 +638,7 @@ def plan_encoding(
         channels=target_channels,
         total_duration=total,
         encoder=encoder,
+        positions=positions,
     )
 
 
@@ -619,6 +663,8 @@ def build_filter_graph(
     normalising unconditionally keeps the graph the same shape in every case.
     """
     layout = "mono" if plan.channels == 1 else "stereo"
+    overlapping = any(s.overlap_ms for s in resolved)
+
     chains = []
     for index, (segment, probe) in enumerate(zip(resolved, probes)):
         filters = [f"aformat=sample_rates={plan.sample_rate}:channel_layouts={layout}"]
@@ -629,10 +675,24 @@ def build_filter_graph(
             seconds = min(segment.fade_out_ms / 1000, probe.duration)
             start = max(probe.duration - seconds, 0.0)
             filters.append(f"afade=t=out:st={start:.3f}:d={seconds:.3f}")
+        if overlapping:
+            # Place the segment at its timeline position instead of butting it
+            # onto the previous one. adelay takes whole milliseconds.
+            delay = round(plan.positions[index] * 1000)
+            if delay:
+                filters.append(f"adelay={delay}:all=1")
         chains.append(f"[{index}:a]{','.join(filters)}[a{index}]")
 
     labels = "".join(f"[a{i}]" for i in range(len(resolved)))
-    chains.append(f"{labels}concat=n={len(resolved)}:v=0:a=1[out]")
+    if overlapping:
+        # normalize=0 keeps each segment at its own level; amix's default
+        # would divide every input by the number of streams, quietening the
+        # whole episode by ~10 dB just because an outro laps 4 seconds.
+        chains.append(
+            f"{labels}amix=inputs={len(resolved)}:duration=longest:normalize=0[out]"
+        )
+    else:
+        chains.append(f"{labels}concat=n={len(resolved)}:v=0:a=1[out]")
     return ";".join(chains)
 
 
@@ -766,11 +826,15 @@ def parse_overrides(pairs) -> dict:
 
 def print_plan(resolved, probes, plan, out_path) -> None:
     print("Segments (playback order):")
-    for segment, measured in zip(resolved, probes):
-        fades = ""
+    for index, (segment, measured) in enumerate(zip(resolved, probes)):
+        notes = []
         if segment.fade_in_ms or segment.fade_out_ms:
-            fades = f"  fade {segment.fade_in_ms}/{segment.fade_out_ms} ms"
-        print(f"  {segment.id:<12} {measured.duration:8.1f}s  {segment.path}{fades}")
+            notes.append(f"fade {segment.fade_in_ms}/{segment.fade_out_ms} ms")
+        if segment.overlap_ms:
+            at = plan.positions[index] if plan.positions else 0.0
+            notes.append(f"overlaps by {segment.overlap_ms / 1000:.2f}s, starts at {at:.1f}s")
+        suffix = f"  [{'; '.join(notes)}]" if notes else ""
+        print(f"  {segment.id:<12} {measured.duration:8.1f}s  {segment.path}{suffix}")
 
     print(f"\nTotal: {plan.total_duration:.1f}s -> {out_path}")
     if plan.mode == "copy":

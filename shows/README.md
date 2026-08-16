@@ -110,6 +110,7 @@ Declares how a finished episode is assembled from its pieces. Read by `scripts/s
 | `match` | Case-insensitive regex tested against a candidate's **basename**. Used for `episode` slots |
 | `required` | Default `true`. A missing optional slot is dropped; a missing required slot is a hard failure |
 | `fadeInMs` / `fadeOutMs` | Default `0`. Non-zero forces a re-encode. Useful where a segment is cut from a longer broadcast file and the edit point is abrupt |
+| `overlapMs` | Default `0`. How far this segment starts **before** the previous one ends — the outro tuck, where music comes up under the closing words. Meaningless (and rejected) on the first segment. Non-zero forces a re-encode and switches the graph from `concat` to delayed `amix` |
 | `output` | Filename template for the deliverable. `{episode}` and `{show}` are available; default `"{episode}.mp3"`. The extension picks the format |
 | `encode.bitrate` | Lossy target, e.g. `"192k"`. `null` derives it from the inputs, capped, defaulting to 192k for lossless sources |
 | `encode.sampleRate` | Pins the output rate, e.g. `44100`. `null` follows the highest input rate |
@@ -125,6 +126,8 @@ shows/<slug>/episodes/<episode-slug>/audio/
 The location comes from the `episodes` block — `localPath` and `subdirs.audio`, the same keys `scripts/episode-init.py` writes. **`localPath` may be absolute**, which is the seam for moving a show's folder off the repo (onto the production SSD, say) without touching code. The stitcher excludes its own output from the input scan, so re-running an episode is safe even though the deliverable matches the same `match` pattern as its source body.
 
 The same grammar covers a two-part-plus-midroll show (`segment_a` / `midroll` / `segment_b`) and a bookended one (`intro` / `program` / `outro`) without any special-casing.
+
+**Setting `overlapMs` for a templated show.** A hand-mixing producer hears exactly where the host stops talking and tucks the music against it. A template cannot, so it should sit *looser* than the hand-mixed reference — otherwise an episode whose speech runs long gets its sign-off walked on. In Focus is set to `3200`, a second short of the 4.14–4.30s its recent sessions use. Read the real value out of the sessions with `ptftool` (see below) rather than guessing, then back off.
 
 **On `match` patterns:** make them specific enough to exclude the show's own bookends and any sibling deliverables in the same drop folder. `\d?INF\d{4}` matches `6INF0123.wav` but not `INFOCUS_INTRO.wav`; `mcross` matches the McCoshen & Ross body but not the other Here & Now segments that land beside it. The resolver fails loudly on both ambiguity and orphans rather than guessing.
 

@@ -27,6 +27,7 @@ from stitch_audio import (  # noqa: E402
     plan_encoding,
     resolve_slots,
     snap_bitrate,
+    timeline_positions,
 )
 
 # --- fixtures ----------------------------------------------------------
@@ -619,6 +620,119 @@ def test_mono_inputs_produce_a_mono_layout():
     probes = [probe(5.0, channels=1)]
     plan = plan_encoding(resolved, probes, None)
     assert "channel_layouts=mono" in build_filter_graph(resolved, probes, plan)
+
+
+# --- overlap / timeline ------------------------------------------------
+
+
+def oseg(name, overlap=0, fade_in=0, fade_out=0):
+    return ResolvedSegment(
+        id=name, path=Path(f"/raw/{name}.mp3"), fade_in_ms=fade_in,
+        fade_out_ms=fade_out, overlap_ms=overlap,
+    )
+
+
+def test_no_overlap_is_plain_cumulative_addition():
+    resolved = [oseg("intro"), oseg("program"), oseg("outro")]
+    probes = [probe(11.52), probe(2348.01), probe(17.0)]
+    positions, end = timeline_positions(resolved, probes)
+    assert positions == pytest.approx((0.0, 11.52, 2359.53))
+    assert end == pytest.approx(2376.53)  # the plain sum
+
+
+def test_overlap_pulls_a_segment_under_the_previous_one():
+    """The In Focus outro tuck, as episodes 120 and 121 place it."""
+    resolved = [oseg("intro"), oseg("program"), oseg("outro", overlap=4200)]
+    probes = [probe(11.52), probe(2348.01), probe(17.0)]
+    positions, end = timeline_positions(resolved, probes)
+    assert positions[2] == pytest.approx(2355.33)  # 4.2s before the body ends
+    assert end == pytest.approx(2372.33)
+    assert end < sum(p.duration for p in probes)
+
+
+def test_overlap_shortens_the_episode_by_exactly_the_overlap():
+    resolved = [oseg("a"), oseg("b", overlap=4200)]
+    probes = [probe(100.0), probe(20.0)]
+    _, end = timeline_positions(resolved, probes)
+    assert end == pytest.approx(100.0 + 20.0 - 4.2)
+
+
+def test_overlap_cannot_pull_a_segment_past_the_start_of_the_previous():
+    """A 30s overlap on a 5s segment must not produce a negative position."""
+    resolved = [oseg("a"), oseg("b", overlap=30000)]
+    probes = [probe(5.0), probe(20.0)]
+    positions, end = timeline_positions(resolved, probes)
+    assert positions == pytest.approx((0.0, 0.0))
+    assert end == pytest.approx(20.0)
+
+
+def test_the_end_is_the_furthest_reach_not_the_last_segment():
+    """A short outro lapped under a long body must not truncate the body."""
+    resolved = [oseg("body"), oseg("sting", overlap=10000)]
+    probes = [probe(100.0), probe(2.0)]
+    _, end = timeline_positions(resolved, probes)
+    assert end == pytest.approx(100.0)
+
+
+def test_overlap_forces_a_re_encode_and_says_by_how_much():
+    resolved = [oseg("a"), oseg("b", overlap=4200)]
+    plan = plan_encoding(resolved, [probe(100.0), probe(20.0)], None)
+    assert plan.mode == "reencode"
+    assert any("overlaps" in r and "4.20s" in r for r in plan.reasons)
+
+
+def test_overlap_on_the_first_segment_is_a_config_error():
+    config = {
+        "stitch": {
+            "segments": [
+                {"id": "intro", "source": "episode", "match": "intro", "overlapMs": 500},
+                {"id": "program", "source": "episode", "match": "program"},
+            ]
+        }
+    }
+    with pytest.raises(StitchConfigError) as exc:
+        load_stitch_spec(config)
+    assert "first segment" in str(exc.value)
+
+
+def test_overlapping_graph_delays_and_mixes_instead_of_concatenating():
+    resolved = [oseg("body"), oseg("outro", overlap=4200)]
+    probes = [probe(100.0), probe(17.0)]
+    plan = plan_encoding(resolved, probes, None)
+    graph = build_filter_graph(resolved, probes, plan)
+    assert "adelay=95800:all=1" in graph  # 100.0 - 4.2
+    assert "amix=inputs=2:duration=longest:normalize=0" in graph
+    assert "concat=" not in graph
+
+
+def test_amix_does_not_normalise():
+    """normalize=1 would quieten the whole episode by ~10 dB."""
+    resolved = [oseg("a"), oseg("b", overlap=1000)]
+    probes = [probe(10.0), probe(5.0)]
+    plan = plan_encoding(resolved, probes, None)
+    assert "normalize=0" in build_filter_graph(resolved, probes, plan)
+
+
+def test_non_overlapping_graph_still_uses_concat():
+    """The validated path is untouched when nothing overlaps."""
+    resolved = [oseg("a"), oseg("b", fade_in=250)]
+    probes = [probe(10.0), probe(5.0)]
+    plan = plan_encoding(resolved, probes, None)
+    graph = build_filter_graph(resolved, probes, plan)
+    assert "concat=n=2:v=0:a=1[out]" in graph
+    assert "adelay" not in graph and "amix" not in graph
+
+
+def test_overlap_config_round_trips():
+    config = {
+        "stitch": {
+            "segments": [
+                {"id": "program", "source": "episode", "match": "prog"},
+                {"id": "outro", "source": "asset", "file": "o.wav", "overlapMs": 4200},
+            ]
+        }
+    }
+    assert load_stitch_spec(config).segments[1].overlap_ms == 4200
 
 
 def test_concat_list_escapes_single_quotes():

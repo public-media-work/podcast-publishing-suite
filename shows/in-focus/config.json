@@ -11,7 +11,7 @@
       ".scc": { "dest": "captions" },
       ".txt": { "dest": "captions" }
     },
-    "note": "Production also drops .mp3, .mp4 and podcast tiles here; only the artifacts above are pulled. Revisions carry a _REV<YYYYMMDD> suffix and are separate episodes."
+    "note": "Production also drops .mp3, .mp4 and podcast tiles here; only the artifacts above are pulled. Revisions carry a _REV<YYYYMMDD> suffix and are separate episodes. An episode with only a .wav and no captions has probably not aired yet -- captions arrive after."
   },
   "episodes": {
     "localPath": "shows/in-focus/episodes",
@@ -39,7 +39,8 @@
       {
         "id": "outro",
         "source": "asset",
-        "file": "assets/audio/INFOCUS_OUTRO.wav"
+        "file": "assets/audio/INFOCUS_OUTRO.wav",
+        "overlapMs": 3200
       }
     ]
   }

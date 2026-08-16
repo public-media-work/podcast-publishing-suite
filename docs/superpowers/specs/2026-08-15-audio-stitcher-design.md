@@ -196,11 +196,22 @@ segment.
 
 ## Known gaps
 
-- **No overlap/crossfade support.** Both shows currently tuck the outro under
-  the end of the body by a hand-placed amount (In Focus 0.3–4.3s, McCoshen &
-  Ross 0.07–1.45s). A butt-splice is faithful at the head and slightly long at
-  the tail. If that seam matters, the schema would need a per-join
-  `overlapMs` and the concat filter would have to become `acrossfade`.
+- ~~No overlap support.~~ **Added.** `overlapMs` on a slot pulls it back under
+  the tail of the one before, which is how the sessions place the outro. The
+  graph switches from `concat` to per-input `adelay` plus
+  `amix=…:normalize=0` — normalising would divide every input by the stream
+  count and quieten the whole episode by ~10 dB because an outro laps four
+  seconds. `concat` is still used when nothing overlaps, so the already-verified
+  path is untouched. Verified no clipping: a mixed In Focus episode peaks at
+  −5.9 dB.
+
+  **A template should sit looser than the hand mix.** In Focus sessions 120 and
+  121 tuck by 4.14s and 4.30s, but a producer places that by ear against a
+  known ending; a fixed value applied to every episode would walk on the
+  sign-off whenever speech runs long. Set to `3200` — a second short of the
+  reference, per editorial direction. McCoshen & Ross stays butt-spliced: its
+  sessions only overlap 0.07–1.45s, close enough that the plain splice was
+  confirmed good on a listen.
 - **Show media is local-only state.** `.gitignore` allowlists
   `shows/*/config.json`, `brand.json`, and `glossary.json` and ignores
   everything else under a show folder, so structural definitions are versioned
